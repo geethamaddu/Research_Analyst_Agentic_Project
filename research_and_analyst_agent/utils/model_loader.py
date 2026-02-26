@@ -96,47 +96,7 @@ class ModelLoader:
             log.error("Error loading embedding model", error=str(e))
             raise ResearchAnalystException("Failed to load embedding model", sys)
 
-    # ----------------------------------------------------------------------
-    # LLM Loader
-    # ----------------------------------------------------------------------
-    # list of known free‑tier / flash models that have zero quota by default
-    FREE_TIER_GOOGLE_MODELS = {"gemini-2.0-flash", "gemini-1.5-mini"}
-
-    class _LLMWrapper:
-        """Wrapper around a raw LLM instance that handles quota errors.
-
-        The underlying LangChain model may raise a 429/RESOURCE_EXHAUSTED
-        error when a request is made.  We intercept that here, log a
-        friendly message and optionally propagate a specialized exception
-        so callers can choose to retry or switch providers.
-        """
-
-        def __init__(self, inner, fallback=None):
-            self._inner = inner
-            self._fallback = fallback
-
-        def invoke(self, *args, **kwargs):
-            try:
-                return self._inner.invoke(*args, **kwargs)
-            except Exception as e:  # pylint: disable=broad-except
-                msg = str(e)
-                if "Quota exceeded" in msg or "RESOURCE_EXHAUSTED" in msg or "429" in msg:
-                    log.error("LLM request failed due to quota limit", error=msg)
-                    # if a fallback is configured, try it once
-                    if self._fallback:
-                        log.info("Attempting fallback LLM provider")
-                        return self._fallback.invoke(*args, **kwargs)
-                    # wrap and raise for calling code
-                    raise ResearchAnalystException(
-                        "Quota exceeded for selected LLM, please update configuration or use a different provider",
-                        e,
-                    )
-                raise
-
-        def __getattr__(self, item):
-            # forward any other attribute access to the underlying model
-            return getattr(self._inner, item)
-
+   
     def load_llm(self):
         """
         Load and return a chat‑based LLM according to the configured provider.
