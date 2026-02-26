@@ -53,6 +53,19 @@ class ResearchAnalystException(Exception):
         return f"ResearchAnalystException(file={self.file_name!r}, line={self.lineno}, message={self.error_message!r})"
 
 
+# ---------------------------------------------------------------------------
+# Domain-specific exception subclasses
+# ---------------------------------------------------------------------------
+
+class QuotaExceededException(ResearchAnalystException):
+    """Raised when an LLM call fails due to quota/rate‑limit (HTTP 429).
+
+    Upstream logic can catch this type specifically and attempt a retry,
+    fall back to another provider, or present a user-friendly message.
+    """
+    pass
+
+
 if __name__ == "__main__":
     # Demo-1: generic exception -> wrap
     try:

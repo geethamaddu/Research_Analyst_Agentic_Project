@@ -99,21 +99,62 @@ class ModelLoader:
     # ----------------------------------------------------------------------
     # LLM Loader
     # ----------------------------------------------------------------------
+    # list of known free‑tier / flash models that have zero quota by default
+    FREE_TIER_GOOGLE_MODELS = {"gemini-2.0-flash", "gemini-1.5-mini"}
+
+    class _LLMWrapper:
+        """Wrapper around a raw LLM instance that handles quota errors.
+
+        The underlying LangChain model may raise a 429/RESOURCE_EXHAUSTED
+        error when a request is made.  We intercept that here, log a
+        friendly message and optionally propagate a specialized exception
+        so callers can choose to retry or switch providers.
+        """
+
+        def __init__(self, inner, fallback=None):
+            self._inner = inner
+            self._fallback = fallback
+
+        def invoke(self, *args, **kwargs):
+            try:
+                return self._inner.invoke(*args, **kwargs)
+            except Exception as e:  # pylint: disable=broad-except
+                msg = str(e)
+                if "Quota exceeded" in msg or "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                    log.error("LLM request failed due to quota limit", error=msg)
+                    # if a fallback is configured, try it once
+                    if self._fallback:
+                        log.info("Attempting fallback LLM provider")
+                        return self._fallback.invoke(*args, **kwargs)
+                    # wrap and raise for calling code
+                    raise ResearchAnalystException(
+                        "Quota exceeded for selected LLM, please update configuration or use a different provider",
+                        e,
+                    )
+                raise
+
+        def __getattr__(self, item):
+            # forward any other attribute access to the underlying model
+            return getattr(self._inner, item)
+
     def load_llm(self):
         """
-        Load and return a chat-based LLM according to the configured provider.
+        Load and return a chat‑based LLM according to the configured provider.
 
         Supported providers:
             - OpenAI
             - Google (Gemini)
             - Groq
 
-        Returns:
-            ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq: LLM instance
+        A small sanity check is performed for Google models to warn when a
+        free‑tier/flash variant is configured, since those often have a
+        quota of 0 and immediately fail with a 429 error.  The returned
+        object is wrapped so that invocations are guarded against quota
+        errors and an informative exception is raised.
         """
         try:
             llm_block = self.config["llm"]
-            provider_key = os.getenv("LLM_PROVIDER", "openai")
+            provider_key = os.getenv("LLM_PROVIDER", "google")
 
             if provider_key not in llm_block:
                 log.error("LLM provider not found in configuration", provider=provider_key)
@@ -128,7 +169,13 @@ class ModelLoader:
             log.info("Loading LLM", provider=provider, model=model_name)
 
             if provider == "google":
-                llm = ChatGoogleGenerativeAI(
+                if model_name in self.FREE_TIER_GOOGLE_MODELS:
+                    log.warning(
+                        "Configured Google model '%s' is a free-tier/flash variant which often has 0 quota;"
+                        " switching to paid equivalent or update your config.",
+                        model_name,
+                    )
+                raw_llm = ChatGoogleGenerativeAI(
                     model=model_name,
                     google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),
                     temperature=temperature,
@@ -136,14 +183,14 @@ class ModelLoader:
                 )
 
             elif provider == "groq":
-                llm = ChatGroq(
+                raw_llm = ChatGroq(
                     model=model_name,
                     api_key=self.api_key_mgr.get("GROQ_API_KEY"),
                     temperature=temperature,
                 )
 
             elif provider == "openai":
-                llm = ChatOpenAI(
+                raw_llm = ChatOpenAI(
                     model=model_name,
                     api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
                     temperature=temperature,
@@ -152,6 +199,9 @@ class ModelLoader:
             else:
                 log.error("Unsupported LLM provider encountered", provider=provider)
                 raise ValueError(f"Unsupported LLM provider: {provider}")
+
+            # wrap the model to guard against quota issues
+            llm = self._LLMWrapper(raw_llm)
 
             log.info("LLM loaded successfully", provider=provider, model=model_name)
             return llm
@@ -177,8 +227,12 @@ if __name__ == "__main__":
         # Test LLM
         llm = loader.load_llm()
         print(f"LLM Loaded: {llm}")
-        result = llm.invoke("Hello, how are you?")
-        print(f"LLM Result: {result.content[:200]}")
+        try:
+            result = llm.invoke("Hello, how are you?")
+            print(f"LLM Result: {result.content[:200]}")
+        except ResearchAnalystException as qe:
+            # Rate-limit / quota error; printed message already logged by wrapper
+            print("Encountered a quota error running the LLM:", qe)
 
         log.info("ModelLoader test completed successfully")
 
