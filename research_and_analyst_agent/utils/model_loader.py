@@ -96,21 +96,20 @@ class ModelLoader:
             log.error("Error loading embedding model", error=str(e))
             raise ResearchAnalystException("Failed to load embedding model", sys)
 
-   
+    # ----------------------------------------------------------------------
+    # LLM Loader
+    # ----------------------------------------------------------------------
     def load_llm(self):
         """
-        Load and return a chat‑based LLM according to the configured provider.
+        Load and return a chat-based LLM according to the configured provider.
 
         Supported providers:
             - OpenAI
             - Google (Gemini)
             - Groq
 
-        A small sanity check is performed for Google models to warn when a
-        free‑tier/flash variant is configured, since those often have a
-        quota of 0 and immediately fail with a 429 error.  The returned
-        object is wrapped so that invocations are guarded against quota
-        errors and an informative exception is raised.
+        Returns:
+            ChatOpenAI | ChatGoogleGenerativeAI | ChatGroq: LLM instance
         """
         try:
             llm_block = self.config["llm"]
@@ -129,13 +128,7 @@ class ModelLoader:
             log.info("Loading LLM", provider=provider, model=model_name)
 
             if provider == "google":
-                if model_name in self.FREE_TIER_GOOGLE_MODELS:
-                    log.warning(
-                        "Configured Google model '%s' is a free-tier/flash variant which often has 0 quota;"
-                        " switching to paid equivalent or update your config.",
-                        model_name,
-                    )
-                raw_llm = ChatGoogleGenerativeAI(
+                llm = ChatGoogleGenerativeAI(
                     model=model_name,
                     google_api_key=self.api_key_mgr.get("GOOGLE_API_KEY"),
                     temperature=temperature,
@@ -143,14 +136,14 @@ class ModelLoader:
                 )
 
             elif provider == "groq":
-                raw_llm = ChatGroq(
+                llm = ChatGroq(
                     model=model_name,
                     api_key=self.api_key_mgr.get("GROQ_API_KEY"),
                     temperature=temperature,
                 )
 
             elif provider == "openai":
-                raw_llm = ChatOpenAI(
+                llm = ChatOpenAI(
                     model=model_name,
                     api_key=self.api_key_mgr.get("OPENAI_API_KEY"),
                     temperature=temperature,
@@ -159,9 +152,6 @@ class ModelLoader:
             else:
                 log.error("Unsupported LLM provider encountered", provider=provider)
                 raise ValueError(f"Unsupported LLM provider: {provider}")
-
-            # wrap the model to guard against quota issues
-            llm = self._LLMWrapper(raw_llm)
 
             log.info("LLM loaded successfully", provider=provider, model=model_name)
             return llm
@@ -187,12 +177,8 @@ if __name__ == "__main__":
         # Test LLM
         llm = loader.load_llm()
         print(f"LLM Loaded: {llm}")
-        try:
-            result = llm.invoke("Hello, how are you?")
-            print(f"LLM Result: {result.content[:200]}")
-        except ResearchAnalystException as qe:
-            # Rate-limit / quota error; printed message already logged by wrapper
-            print("Encountered a quota error running the LLM:", qe)
+        result = llm.invoke("Hello, how are you?")
+        print(f"LLM Result: {result.content[:200]}")
 
         log.info("ModelLoader test completed successfully")
 

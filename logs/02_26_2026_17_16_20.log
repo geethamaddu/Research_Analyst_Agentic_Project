@@ -1,0 +1,2 @@
+{"path": "D:\\Learnings\\AgenticAI\\Research_Analyst_Agentic_Project\\research_and_analyst_agent\\config\\configuration.yaml", "keys": ["llm"], "timestamp": "2026-02-26T22:16:20.272138Z", "level": "info", "event": "Configuration loaded successfully"}
+{"timestamp": "2026-02-26T22:16:20.273393Z", "level": "info", "event": "ConfigLoader test run completed successfully"}
